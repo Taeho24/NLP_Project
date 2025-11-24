@@ -1,0 +1,10 @@
+# Environments
+.venv
+venv/
+venv.bak/
+
+# jupyter notebook
+.ipynb_checkpoints/
+
+# sample Data Set
+dataSet/
