@@ -1,3 +1,10 @@
+// ==========================================
+// Sample Code임으로 이 프로젝트에서는 사용하지 않을 예정입니다.
+// 출처: https://velog.io/@kjjdsa/%EC%8A%A4%ED%8C%80-%EA%B2%8C%EC%9E%84%EA%B3%BC-%EB%A6%AC%EB%B7%B0-%ED%81%AC%EB%A1%A4%EB%A7%81
+// 위 출처 코드를 변형하여 작성하였음
+// ==========================================
+
+
 const axios = require("axios");
 const fs = require("fs");
 
