@@ -3,6 +3,7 @@ import steamreviews
 import requests
 import json
 import sys
+import os
 from bs4 import BeautifulSoup # HTML 파싱을 위해 새로 추가
 
 # 필요한 라이브러리가 설치되어 있는지 확인
@@ -114,16 +115,26 @@ def main_crawler():
         return
 
     # 2. Review Crawling
-    print(f"\n🚀 '{game_name}' ({app_id})의 리뷰 {limit}개 수집 시작...")
+    print(f"\n'{game_name}' ({app_id})의 리뷰 {limit}개 수집 시작...")
     reviews_data = get_game_reviews(app_id, limit)
     
     # 3. Save Data
     if reviews_data:
-        output_filename = f"reviews_{app_id}_{limit}_{game_name.replace(' ', '_')}.json"
+        data_dir = "dataSet"
+        try:
+            os.makedirs(data_dir, exist_ok=True)
+            print(f"📂 디렉토리 '{data_dir}' 생성 완료.")
+        except Exception as e:
+            print(f"❌ 디렉토리 생성 실패: {e}")
+            return # 실패 시 저장 중단
+        
+        safe_game_name = game_name.replace(' ', '_')
+        output_filename = os.path.join(data_dir, f"reviews_{app_id}_{limit}_{safe_game_name}.json")
+        
         with open(output_filename, 'w', encoding='utf-8') as f:
             json.dump(reviews_data, f, ensure_ascii=False, indent=4)
             
-        print(f"\n🎉 크롤링 완료: 총 {len(reviews_data)}개 리뷰 수집.")
+        print(f"\n! 크롤링 완료: 총 {len(reviews_data)}개 리뷰 수집.")
         print(f"📂 데이터가 '{output_filename}' 파일에 저장되었습니다.")
         
         return reviews_data
