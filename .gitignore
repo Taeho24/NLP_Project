@@ -1,0 +1,13 @@
+# Environments
+.venv
+venv/
+venv.bak/
+
+# jupyter notebook
+.ipynb_checkpoints/
+
+# crawling caching directory
+data/
+
+# sample Data Set
+dataSet/
