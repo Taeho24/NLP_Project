@@ -1,13 +1,40 @@
-# Environments
+# python Environments
+__pycache__/
+*.pyc
+*.pyo
 .venv
 venv/
 venv.bak/
+env/
+.env
 
 # jupyter notebook
 .ipynb_checkpoints/
+*.tmp
+*.bak
 
 # crawling caching directory
 data/
 
 # sample Data Set
 dataSet/
+
+# 운영체제 및 IDE 파일
+.DS_Store
+.vscode/
+.idea/
+*~
+*.swp
+Thumbs.db
+
+# cache 디렉토리 (HuggingFace, PyTorch 등)
+.cache/
+hf_cache/
+
+# PyTorch 모델 파일 (저장된 모델 체크포인트)
+*.pt
+*.pth
+
+# 임시 학습 로그 및 결과
+runs/
+logs/

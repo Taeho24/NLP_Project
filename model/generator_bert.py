@@ -5,30 +5,43 @@ import pandas as pd
 import numpy as np
 import os
 import json
-from transformers import AutoTokenizer, AutoModel
 import torch
+from transformers import AutoModel, AutoTokenizer
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.cluster import KMeans # 추출 요약을 위한 클러스터링
-from sklearn.preprocessing import StandardScaler # 태그 예측을 위한 스케일러
-from transformers import AutoModel
-from kobert_transformers import get_tokenizer as get_kobert_tokenizer
+from sklearn.cluster import KMeans
+from typing import Dict, List, Tuple
 
 # --- 환경 설정 ---
-DATA_DIR = "../dataSet"
+# DATA_DIR = "dataSet"
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dataSet')
 
 # 한국어 BERT 모델 (KoBERT) 로드
 MODEL_NAME = "skt/kobert-base-v1" 
 
+# Streamlit 환경에서 캐싱 가능하도록 별도 함수로 정의
+def load_bert_model():
+    """BERT 모델과 토크나이저를 로드합니다. (app.py에서 캐싱하여 사용)"""
+    try:
+        from kobert_transformers import get_tokenizer as get_kobert_tokenizer # 함수 내에서 다시 import
+        tokenizer = get_kobert_tokenizer()
+        model = AutoModel.from_pretrained("skt/kobert-base-v1")
+        model.eval()
+        return tokenizer, model
+    except Exception as e:
+        # Streamlit 환경이 아니므로 오류를 반환
+        print(f"BERT 모델 로드 실패: {e}") 
+        return None, None
+    
 # 최종 전처리 및 사용자별 성향 벡터 집계
-def aggregate_user_profiles(input_csv_path, min_playtime_hours=2):
+def aggregate_user_profiles(df: pd.DataFrame, min_playtime_hours: int = 2) -> Tuple[Dict[str, float], List[str]]:
     """
     개별 리뷰 데이터를 사용자(author_id)별 최종 성향 벡터로 집계합니다.
     """
-    try:
-        df = pd.read_csv(input_csv_path)
-    except FileNotFoundError:
-        print(f"❌ 오류: 파일을 찾을 수 없습니다: {input_csv_path}")
-        return None
+    # try:
+    #     df = pd.read_csv(input_csv_path)
+    # except FileNotFoundError:
+    #     print(f"❌ 오류: 파일을 찾을 수 없습니다: {input_csv_path}")
+    #     return None
     
     df['playtime_hours'] = df['playtime_forever'] / 60
     
@@ -39,48 +52,41 @@ def aggregate_user_profiles(input_csv_path, min_playtime_hours=2):
     ].copy()
 
     if df_filtered.empty:
-        print("경고: 필터링 후 분석할 유효한 리뷰가 부족합니다.")
-        return None
+        # print("경고: 필터링 후 분석할 유효한 리뷰가 부족합니다.")
+        return {}, []
     
-    print(f"✅ 최종 분석 대상 리뷰 수: {len(df_filtered)}개")
+    # print(f"✅ 최종 분석 대상 리뷰 수: {len(df_filtered)}개")
     
     # 성향 벡터 컬럼 목록
     persona_cols = [col for col in df_filtered.columns if col.startswith('S_')]
     
     # 2) 사용자별 최종 성향 벡터 및 통계 집계
-    agg_funcs = {}
-    
-    for col in persona_cols:
-        agg_funcs[col] = (col, 'mean') # 예: {'S_narrative': ('S_narrative', 'mean')}
-
-    # 가장 긴 리뷰 텍스트를 대표로 사용
-    agg_funcs['representative_review'] = (
-        'review_text', 
-        lambda x: x.iloc[x.str.len().argmax()]
-    )
-
     agg_args = {}
-    for new_col, (old_col, func) in agg_funcs.items():
-        # 이 문법은 Pandas의 유연성을 활용하여 안전하게 새 컬럼을 정의
-        agg_args[new_col] = pd.NamedAgg(column=old_col, aggfunc=func)
+    for col in persona_cols:
+        agg_args[col] = pd.NamedAgg(column=col, aggfunc='mean')
+        
+    agg_args['representative_review'] = pd.NamedAgg(
+        column='review_text', 
+        aggfunc=lambda x: x.iloc[x.str.len().argmax()]
+    )
     
     agg_df = df_filtered.groupby('author_id').agg(**agg_args).reset_index()
     
     # 전체 유저의 최종 평균 성향 벡터 (요약 및 태그 생성에 사용)
     game_persona_vector = agg_df[persona_cols].mean().to_dict()
     
-    # 게임 이름 추출
-    # 예: analyzed_산나비_reviews.csv
-    parts = os.path.basename(input_csv_path).split('_')
-    game_name = parts[-2]
+    # # 게임 이름 추출
+    # # 예: analyzed_산나비_reviews.csv
+    # parts = os.path.basename(input_csv_path).split('_')
+    # game_name = parts[-2]
     
     # 모든 리뷰 텍스트를 하나의 리스트로 반환 (요약에 사용)
     all_reviews = df_filtered['review_text'].tolist()
     
-    return game_name, game_persona_vector, all_reviews
+    return game_persona_vector, all_reviews
 
 # BERT 기반 추출 요약 (Extractive Summarization)
-def get_sentence_embeddings(reviews, tokenizer, model):
+def get_sentence_embeddings(reviews: List[str], tokenizer: AutoTokenizer, model: AutoModel) -> Tuple[List[str], np.ndarray | None]:
     """문장을 BERT 모델을 통해 임베딩 벡터로 변환합니다."""
     # 모든 리뷰를 문장 단위로 분리
     sentences = []
@@ -103,59 +109,58 @@ def get_sentence_embeddings(reviews, tokenizer, model):
         
     return sentences, embeddings
 
-def generate_summary(sentences, embeddings, summary_length=3):
+def generate_summary(sentences: List[str], embeddings: np.ndarray | None, summary_length: int = 4) -> str:
     """K-Means 클러스터링을 사용하여 가장 대표적인 문장을 추출합니다."""
     
     if not sentences or len(sentences) < summary_length:
         return "리뷰 텍스트가 부족하거나 너무 짧아 요약 생성에 실패했습니다."
-
-    # K-Means 클러스터링 (요약 문장 수 = 클러스터 수)
-    kmeans = KMeans(n_clusters=summary_length, random_state=42, n_init='auto')
-    kmeans.fit(embeddings)
-    
-    # 각 클러스터의 중심(Centroid)을 찾습니다.
-    centroids = kmeans.cluster_centers_
-    
-    # 각 클러스터 중심과 가장 가까운 문장을 찾습니다. (대표 문장)
-    summary_sentences = []
-    
-    for i in range(summary_length):
-        # 해당 클러스터에 속하는 임베딩 벡터와 중심 벡터 간의 거리 계산
-        distances = cosine_similarity([centroids[i]], embeddings)[0]
+    try:
+        # K-Means 클러스터링 (요약 문장 수 = 클러스터 수)
+        kmeans = KMeans(n_clusters=summary_length, random_state=42, n_init='auto')
+        kmeans.fit(embeddings)
         
-        # 거리가 가장 가까운 문장의 인덱스 (가장 유사한 문장)
-        closest_index = np.argsort(distances)[-1] 
+        # 각 클러스터의 중심(Centroid)을 찾습니다.
+        centroids = kmeans.cluster_centers_
         
-        # 중복 방지
-        if sentences[closest_index] not in summary_sentences:
-            summary_sentences.append(sentences[closest_index])
+        # 각 클러스터 중심과 가장 가까운 문장을 찾습니다. (대표 문장)
+        summary_sentences = []
+        
+        for i in range(summary_length):
+            # 해당 클러스터에 속하는 임베딩 벡터와 중심 벡터 간의 거리 계산
+            distances = cosine_similarity([centroids[i]], embeddings)[0]
             
-    return ". ".join(summary_sentences) + "."
-
+            # 거리가 가장 가까운 문장의 인덱스 (가장 유사한 문장)
+            closest_index = np.argsort(distances)[-1] 
+            
+            # 중복 방지
+            if sentences[closest_index] not in summary_sentences:
+                summary_sentences.append(sentences[closest_index])
+                
+        return ". ".join(summary_sentences) + "."
+    except Exception as e:
+            return f"요약 중 오류 발생: {e}"
 
 # 성향 벡터 기반 태그 예측
-def predict_tags(persona_vector):
+def predict_tags(persona_vector: Dict[str, float]) -> List[str]:
     """성향 벡터를 기반으로 추천 태그를 생성합니다."""
+    
+    # 임계값
+    THRESHOLD = 0.15 
     
     # 미리 정의된 태그 후보 목록
     TAG_CANDIDATES = {
-        'S_narrative': ["#감동적인_서사", "#스토리_중심", "#뛰어난_연출"],
-        'S_freedom': ["#높은_자유도", "#탐험_필수", "#나만의_선택", "#오픈월드"],
-        'S_stability': ["#갓적화", "#쾌적한_환경", "#버그_거의없음", "#안정적"],
-        'S_challenge': ["#극악의_난이도", "#도전과제", "#피지컬_다수요구", "#고수전용"]
+        'narrative': ["#갓서사", "#스토리_중심", "#뛰어난_연출"],
+        'freedom': ["#높은_자유도", "#탐험_필수", "#나만의_선택", "#오픈월드"],
+        'stability': ["#갓적화", "#쾌적한_환경", "#버그_없음", "#안정적"],
+        'challenge': ["#극악의_난이도", "#도전과제", "#피지컬_요구", "#고수전용"]
     }
-    
-    # 벡터를 기반으로 태그 점수화
-    if not persona_vector: return []
-    max_score = max(persona_vector.values())
-    if max_score == 0: return []
     
     tag_scores = {}
     for vector_key, score in persona_vector.items():
-        if vector_key in TAG_CANDIDATES:
-            # **가장 높은 점수**를 가진 축에 대해서만 태그 부여
-            if score == max_score: 
-                for tag in TAG_CANDIDATES[vector_key]:
+        key_without_s = vector_key.replace('S_', '')
+        if key_without_s in TAG_CANDIDATES:
+            if score >= THRESHOLD: 
+                for tag in TAG_CANDIDATES[key_without_s]:
                     tag_scores[tag] = tag_scores.get(tag, 0) + score
                     
     # 점수가 높은 상위 5개 태그 선택
@@ -164,59 +169,90 @@ def predict_tags(persona_vector):
     # 태그 목록만 반환
     return [tag for tag, score in sorted_tags]
 
-def main_generator_bert():
-    # 파일 경로 설정 (dataSet 디렉토리의 파일을 로드)
-    input_filename = input("분석된 CSV 파일명을 입력하세요 (예: analyzed_{appID}_reviews.csv): ")
-    input_csv_path = os.path.join(DATA_DIR, input_filename)
-
-    # 1. 최종 전처리 및 성향 벡터 집계
-    result = aggregate_user_profiles(input_csv_path)
+def run_bert_generation(analyzed_csv_path: str, game_name: str, tokenizer: AutoTokenizer, model: AutoModel) -> Tuple[str, List[str], str]:
+    """
+    분석된 CSV 파일을 로드하여 BERT 생성 및 TXT 파일 저장을 실행합니다.
+    """
+    df = pd.read_csv(analyzed_csv_path)
     
-    if result is None:
-        print("분석을 위한 유효한 사용자 프로필을 생성하지 못했습니다.")
-        return
-
-    game_name, persona_vector, all_reviews = result
+    # 1. 최종 전처리 및 사용자별 성향 벡터 집계
+    game_persona_vector, all_reviews = aggregate_user_profiles(df)
     
-    # 2. BERT 모델 로드
-    print(f"\n! {MODEL_NAME} 모델 로드 중...")
-    try:
-        tokenizer = get_kobert_tokenizer()
-        model = AutoModel.from_pretrained(MODEL_NAME)
-        model.eval() # 추론 모드
-    except Exception as e:
-        print(f"❌ BERT 모델 로드 실패: {e}")
-        return
-
-    # 3. 요약 생성 (BERT 기반 추출 요약)
+    if not game_persona_vector:
+        return "분석할 유효한 리뷰가 부족하여 요약 생성에 실패했습니다.", [], ""
+    
+    # 2. 요약 생성 (BERT)
     sentences, embeddings = get_sentence_embeddings(all_reviews, tokenizer, model)
     summary = generate_summary(sentences, embeddings, summary_length=4)
     
-    # 4. 태그 생성 (성향 벡터 기반 예측)
-    predicted_tags = predict_tags(persona_vector)
+    # 3. 태그 생성 (성향 벡터 기반)
+    predicted_tags = predict_tags(game_persona_vector)
     
-    # 5. 결과 출력 및 저장
-    print("\n========================================")
-    print(f"🎮 게임 분석 결과: {game_name}")
-    print("========================================")
-    print("1. 추출 요약:")
-    print(summary)
-    print("\n2. 성향 벡터 기반 추천 태그:")
-    print(f"{', '.join(predicted_tags)}")
-    print("\n3. 최종 성향 벡터:")
-    print(json.dumps({k.replace('S_', ''): round(v, 4) for k, v in persona_vector.items()}, indent=4, ensure_ascii=False))
-    print("========================================")
+    # 4. 결과 저장
+    safe_game_name = game_name.replace(' ', '_')
+    output_filename = os.path.join(DATA_DIR, f"BERT_Analysis_{safe_game_name}.txt")
     
-    # 결과를 텍스트 파일로 저장
-    output_filename = os.path.join(DATA_DIR, f"BERT_Analysis_{game_name}.txt")
     with open(output_filename, 'w', encoding='utf-8') as f:
         f.write(f"게임: {game_name}\n")
         f.write(f"요약:\n{summary}\n\n")
         f.write(f"추천 태그:\n{', '.join(predicted_tags)}\n\n")
-        f.write(f"성향 벡터:\n{json.dumps(persona_vector, ensure_ascii=False, indent=4)}\n")
+        f.write(f"성향 벡터:\n{json.dumps(game_persona_vector, ensure_ascii=False, indent=4)}\n")
     
-    print(f"\n📂 분석 결과가 '{output_filename}'에 저장되었습니다.")
+    return summary, predicted_tags, output_filename
+
+# def main_generator_bert():
+#     # 파일 경로 설정 (dataSet 디렉토리의 파일을 로드)
+#     input_filename = input("분석된 CSV 파일명을 입력하세요 (예: analyzed_{appID}_reviews.csv): ")
+#     input_csv_path = os.path.join(DATA_DIR, input_filename)
+
+#     # 1. 최종 전처리 및 성향 벡터 집계
+#     result = aggregate_user_profiles(input_csv_path)
+    
+#     if result is None:
+#         print("분석을 위한 유효한 사용자 프로필을 생성하지 못했습니다.")
+#         return
+
+#     game_name, persona_vector, all_reviews = result
+    
+#     # 2. BERT 모델 로드
+#     print(f"\n! {MODEL_NAME} 모델 로드 중...")
+#     try:
+#         tokenizer = get_kobert_tokenizer()
+#         model = AutoModel.from_pretrained(MODEL_NAME)
+#         model.eval() # 추론 모드
+#     except Exception as e:
+#         print(f"❌ BERT 모델 로드 실패: {e}")
+#         return
+
+#     # 3. 요약 생성 (BERT 기반 추출 요약)
+#     sentences, embeddings = get_sentence_embeddings(all_reviews, tokenizer, model)
+#     summary = generate_summary(sentences, embeddings, summary_length=4)
+    
+#     # 4. 태그 생성 (성향 벡터 기반 예측)
+#     predicted_tags = predict_tags(persona_vector)
+    
+#     # 5. 결과 출력 및 저장
+#     print("\n========================================")
+#     print(f"🎮 게임 분석 결과: {game_name}")
+#     print("========================================")
+#     print("1. 추출 요약:")
+#     print(summary)
+#     print("\n2. 성향 벡터 기반 추천 태그:")
+#     print(f"{', '.join(predicted_tags)}")
+#     print("\n3. 최종 성향 벡터:")
+#     print(json.dumps({k.replace('S_', ''): round(v, 4) for k, v in persona_vector.items()}, indent=4, ensure_ascii=False))
+#     print("========================================")
+    
+#     # 결과를 텍스트 파일로 저장
+#     output_filename = os.path.join(DATA_DIR, f"BERT_Analysis_{game_name}.txt")
+#     with open(output_filename, 'w', encoding='utf-8') as f:
+#         f.write(f"게임: {game_name}\n")
+#         f.write(f"요약:\n{summary}\n\n")
+#         f.write(f"추천 태그:\n{', '.join(predicted_tags)}\n\n")
+#         f.write(f"성향 벡터:\n{json.dumps(persona_vector, ensure_ascii=False, indent=4)}\n")
+    
+#     print(f"\n📂 분석 결과가 '{output_filename}'에 저장되었습니다.")
 
 
-if __name__ == "__main__":
-    main_generator_bert()
+# if __name__ == "__main__":
+#     main_generator_bert()
