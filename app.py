@@ -40,7 +40,7 @@ def load_bert_resources():
     """BERT 모델과 토크나이저를 로드하고 캐싱합니다."""
     return load_bert_model()
 
-def get_personalized_recommendation(df: pd.DataFrame, user_persona_vector: Dict[str, int]) -> Tuple[str, List[str]]:
+def get_personalized_recommendation(df: pd.DataFrame, user_persona_vector: Dict[str, int]) -> Tuple[str, List[str], int, int]:
     """
     사용자 성향 벡터와 각 리뷰의 성향 벡터를 비교하여 개인화된 추천 태그 및 요약을 생성합니다.
     """
@@ -60,6 +60,10 @@ def get_personalized_recommendation(df: pd.DataFrame, user_persona_vector: Dict[
     # 상위 리뷰 텍스트 결합 (개인화 요약)
     top_reviews_text = " ".join(personalized_df['review_text'].tolist())
     
+    # 개인화된 리뷰 10개의 긍정/부정 개수 계산
+    pos_count = personalized_df['voted_up'].sum()
+    neg_count = top_n - pos_count
+    
     # 개인화 태그 추출 (사용자가 강하게 선호하는 성향 기반)
     all_keywords = []
     # 슬라이더 10점 만점 중 7점 이상을 강한 선호도로 간주
@@ -73,7 +77,7 @@ def get_personalized_recommendation(df: pd.DataFrame, user_persona_vector: Dict[
             }
             all_keywords.extend(TAG_CANDIDATES.get(axis, []))
 
-    return top_reviews_text, list(set(all_keywords))
+    return top_reviews_text, list(set(all_keywords)), pos_count, neg_count
 
 # # 데이터 로드 및 캐싱
 # @st.cache_data
@@ -183,9 +187,9 @@ def main_app():
             st.success(f"✅ 성향 벡터 분석 완료")
             
             # c. BERT 생성 (generator_bert.py 호출)
-            summary, tags, output_path = run_bert_generation(analyzed_path, new_game_name, tokenizer, model)
+            summary, tags, output_path, pos_ratio = run_bert_generation(analyzed_path, new_game_name, tokenizer, model)
 
-            st.success(f"✅ 파이프라인 분석 완료! 요약: {summary[:50]}...")
+            st.success(f"✅ 파이프라인 분석 완료! 긍정 비율: {pos_ratio}%, 요약: {summary[:50]}...")
             st.balloons()
             st.session_state['last_analyzed_game'] = new_game_name.replace(' ', '_')
             st.rerun() 
@@ -225,11 +229,14 @@ def main_app():
     try:
         with open(os.path.join(DATA_DIR, txt_filename), 'r', encoding='utf-8') as f:
             content = f.read()
+            pos_ratio_match = re.search(r"긍정 비율: ([\d.]+)%", content)
+            bert_pos_ratio = float(pos_ratio_match.group(1)) if pos_ratio_match else None
             bert_summary = re.search(r"요약:\n(.*?)\n\n", content, re.DOTALL).group(1).strip()
             bert_tags = [t.strip() for t in re.search(r"추천 태그:\n(.*?)\n\n", content, re.DOTALL).group(1).split(',') if t.strip()]
     except Exception:
-        bert_summary = "BERT 분석 결과를 찾을 수 없습니다."
+        bert_summary = "BERT 분석 결과를 찾을 수 없습니다. (TXT 파일 오류)"
         bert_tags = []
+        bert_pos_ratio = None
 
 
     # --- 3. 사용자 성향 입력 ---
@@ -252,6 +259,19 @@ def main_app():
         
         st.markdown("---")
         
+        # 전체 리뷰 기반 긍정/부정 지표 표시
+        st.subheader("👍 게임 전반적인 긍정/부정 지표")
+        if bert_pos_ratio is not None:
+            st.metric(
+                label=f"전체 긍정 비율 ({len(df)} 리뷰 기준)", 
+                value=f"{bert_pos_ratio}%",
+                delta="좋아요! 이 게임은 평균적으로 긍정적인 평가를 받았습니다." if bert_pos_ratio >= 70 else "참고하세요. 리뷰가 긍정/부정으로 나뉘고 있습니다.",
+            )
+        else:
+            st.warning("전체 긍정 비율을 로드할 수 없습니다.")
+        
+        st.markdown("---")
+        
         # 전체 요약
         st.subheader("📝 전체 리뷰 기반 게임 요약 (BERT)")
         st.info(bert_summary)
@@ -264,7 +284,7 @@ def main_app():
         
         # 개인화 분석 실행
         user_vector_dict = {axis: user_persona_input[axis] for axis in PERSONA_AXES}
-        top_reviews_text, personalized_tags = get_personalized_recommendation(df, user_vector_dict)
+        top_reviews_text, personalized_tags, pos_count, neg_count = get_personalized_recommendation(df, user_vector_dict)
         
         st.subheader("💡 사용자 맞춤형 추천 태그")
         tag_display_personal = " ".join([f'<span style="background-color:#f0ad4e; color:white; padding:5px 10px; border-radius:15px; margin-right:5px; font-weight:bold;">{tag}</span>' for tag in personalized_tags])
@@ -274,6 +294,13 @@ def main_app():
             st.warning("사용자님과 강하게 일치하는 맞춤형 태그를 찾지 못했습니다. 선호도 슬라이더를 7점 이상으로 설정해 보세요.")
         
         st.subheader("📖 개인화 요약 및 추천 리뷰")
+        
+        st.markdown(f"**사용자님과 유사한 리뷰어 {pos_count + neg_count}명의 긍/부정 비율:**")
+        col_pos, col_neg = st.columns(2)
+        col_pos.metric("👍 긍정 리뷰", pos_count)
+        col_neg.metric("👎 부정 리뷰", neg_count)
+        st.markdown("---")
+        
         strong_prefs = [PERSONA_LABELS_KO[k] for k, v in user_vector_dict.items() if v >= 7]
         
         if strong_prefs:

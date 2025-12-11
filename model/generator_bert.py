@@ -169,16 +169,33 @@ def predict_tags(persona_vector: Dict[str, float]) -> List[str]:
     # 태그 목록만 반환
     return [tag for tag, score in sorted_tags]
 
-def run_bert_generation(analyzed_csv_path: str, game_name: str, tokenizer: AutoTokenizer, model: AutoModel) -> Tuple[str, List[str], str]:
+def run_bert_generation(analyzed_csv_path: str, game_name: str, tokenizer: AutoTokenizer, model: AutoModel) -> Tuple[str, List[str], str, float]:
     """
     분석된 CSV 파일을 로드하여 BERT 생성 및 TXT 파일 저장을 실행합니다.
     """
     df = pd.read_csv(analyzed_csv_path)
     
-    # 1. 최종 전처리 및 사용자별 성향 벡터 집계
+    # 1.1. 전체 긍정 비율 계산 (모든 리뷰 사용)
+    total_reviews = len(df)
+    # 'voted_up' (True/False)를 1/0으로 변환하여 합산
+    df['voted_up'] = df['voted_up'].astype(int)
+    positive_count = df['voted_up'].sum() 
+    pos_ratio = round((positive_count / total_reviews) * 100, 1) if total_reviews > 0 else 0.0
+
+    # 1.2. 최종 전처리 및 사용자별 성향 벡터 집계
     game_persona_vector, all_reviews = aggregate_user_profiles(df)
     
     if not game_persona_vector:
+        # 유효한 리뷰가 없을 경우 처리
+        safe_game_name = game_name.replace(' ', '_')
+        output_filename = os.path.join(DATA_DIR, f"BERT_Analysis_{safe_game_name}.txt")
+        
+        with open(output_filename, 'w', encoding='utf-8') as f:
+            f.write(f"게임: {game_name}\n")
+            f.write(f"긍정 비율: {pos_ratio}%\n\n")  # 💡 긍정 비율 추가
+            f.write("요약:\n유효한 리뷰(플레이 시간 5시간 이상)가 부족하여 분석을 건너뜁니다.\n\n")
+            f.write("추천 태그:\n\n성향 벡터:\n{}")
+            
         return "분석할 유효한 리뷰가 부족하여 요약 생성에 실패했습니다.", [], ""
     
     # 2. 요약 생성 (BERT)
@@ -194,11 +211,12 @@ def run_bert_generation(analyzed_csv_path: str, game_name: str, tokenizer: AutoT
     
     with open(output_filename, 'w', encoding='utf-8') as f:
         f.write(f"게임: {game_name}\n")
+        f.write(f"긍정 비율: {pos_ratio}%\n\n")
         f.write(f"요약:\n{summary}\n\n")
         f.write(f"추천 태그:\n{', '.join(predicted_tags)}\n\n")
         f.write(f"성향 벡터:\n{json.dumps(game_persona_vector, ensure_ascii=False, indent=4)}\n")
     
-    return summary, predicted_tags, output_filename
+    return summary, predicted_tags, output_filename, pos_ratio
 
 # def main_generator_bert():
 #     # 파일 경로 설정 (dataSet 디렉토리의 파일을 로드)
