@@ -6,7 +6,7 @@ import steamreviews
 import os
 import json
 import pandas as pd
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
 # --- 환경 설정 ---
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dataSet')
@@ -67,7 +67,63 @@ def get_game_reviews(app_id: int, limit: int = 200) -> List[Dict[str, Any]]:
             
     return reviews_data
 
-def run_collection(game_name: str, limit: int = 200) -> tuple[str | None, int | None, str | None]:
+def search_games(game_name: str) -> List[Dict[str, Any]]:
+    """
+    Steam API를 사용하여 입력된 게임 이름과 연관된 최대 10개의 게임 목록을 반환합니다.
+    """
+    if not game_name:
+        return []
+    
+    # Steam store API의 search endpoint 사용
+    search_url = "https://store.steampowered.com/api/storesearch"
+    params = {
+        'cc': 'kr',           # 국가 코드 (한국)
+        'l': 'korean',        # 언어 (한국어)
+        'term': game_name,    # 검색어
+        'request': '1',
+        'f': 'json'
+    }
+    
+    try:
+        response = requests.get(search_url, params=params, timeout=10)
+        response.raise_for_status() # HTTP 오류 시 예외 발생
+        data = response.json()
+        
+        if data and 'items' in data:
+            # 이름, App ID, 이미지 URL, 가격 정보만 추출
+            results = []
+            for item in data['items'][:10]: # 최대 10개만 반환
+                app_id = item.get('id')
+                header_image_url = f"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{app_id}/header.jpg"
+                price_info = item.get('price')
+                if price_info:
+                    # 'final_formatted'가 "₩ 21,500" 형태의 문자열입니다.
+                    price_text = price_info.get('final_formatted', '가격 정보 없음')
+                else:
+                    # 가격 정보가 없으면 무료로 간주하거나 확인 불가
+                    price_text = "Free / 무료"
+
+                # 3. 출시일 추출
+                release_date = item.get('release_date', '')
+                if not release_date:
+                    release_date = "출시일 미정"
+
+                results.append({
+                    'app_id': app_id,
+                    'name': item.get('name'),
+                    'release_date': release_date, # 추출한 출시일
+                    'header_image': header_image_url,
+                    'price': price_text           # 추출한 가격
+                })
+            return results
+        
+        return []
+
+    except requests.exceptions.RequestException as e:
+        print(f"Steam API 검색 오류: {e}")
+        return []
+
+def run_collection(app_id: int, game_name: str, limit: int = 200) -> Tuple[str, int, str]:
     """크롤링을 실행하고 원본 JSON 파일 경로와 App ID를 반환합니다."""
     app_id = get_app_id_by_name(game_name)
     if not app_id:

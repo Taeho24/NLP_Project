@@ -156,12 +156,24 @@ def predict_tags(persona_vector: Dict[str, float]) -> List[str]:
     }
     
     tag_scores = {}
+    # 1. 1차 시도: 임계값 0.15 이상인 태그만 수집
     for vector_key, score in persona_vector.items():
         key_without_s = vector_key.replace('S_', '')
+        if key_without_s in TAG_CANDIDATES and score >= THRESHOLD:
+            for tag in TAG_CANDIDATES[key_without_s]:
+                tag_scores[tag] = tag_scores.get(tag, 0) + score
+    
+    # 2. 2차 시도: 임계값 0.15를 넘지 못했다면, 최고점을 가진 축 1개만 선택 (폴백)
+    if not tag_scores:
+        # 벡터 값이 가장 높은 축과 그 값 찾기
+        best_axis = max(persona_vector, key=persona_vector.get)
+        best_score = persona_vector[best_axis]
+            
+        # 최고점 축의 첫 번째 태그만 선택
+        key_without_s = best_axis.replace('S_', '')
         if key_without_s in TAG_CANDIDATES:
-            if score >= THRESHOLD: 
-                for tag in TAG_CANDIDATES[key_without_s]:
-                    tag_scores[tag] = tag_scores.get(tag, 0) + score
+            # 해당 축의 대표 태그 1개만 반환
+            return [TAG_CANDIDATES[key_without_s][0]]
                     
     # 점수가 높은 상위 5개 태그 선택
     sorted_tags = sorted(tag_scores.items(), key=lambda item: item[1], reverse=True)[:5]

@@ -18,8 +18,8 @@ sys.path.append(os.path.join(ROOT_DIR, 'collectData'))
 sys.path.append(os.path.join(ROOT_DIR, 'model'))
 
 try:
-    from collector import run_collection 
-    from analyzer import run_analysis 
+    from collector import run_collection, search_games
+    from analyzer import run_analysis
     from generator_bert import run_bert_generation, load_bert_model
 except ImportError as e:
     st.error(f"❌ 모듈 로드 실패. collectData/ 또는 model/ 디렉토리 구조와 파일명을 확인하세요: {e}")
@@ -166,34 +166,82 @@ def main_app():
 
     # 1. 신규 게임 크롤링 및 분석
     st.header("1. 신규 게임 크롤링 및 분석")
-    new_game_name = st.text_input("분석할 **새로운 게임 이름**을 입력하세요:", key="new_game_input")
+    search_term = st.text_input("분석할 **게임 이름**을 입력하고 [검색] 버튼을 누르세요:", key="search_term")
     review_limit = st.slider("수집할 리뷰 개수 (최대 500개)", 50, 500, 200, step=50)
-
-    if st.button("🚀 분석 시작 (크롤링 ~ BERT 생성)"):
-        if not new_game_name:
-            st.warning("게임 이름을 입력해주세요.")
+    
+    if st.button("🔍 게임 검색"):
+        if not search_term:
+            st.warning("검색할 게임 이름을 입력해주세요.")
+            st.session_state['search_results'] = []
             return
-
-        with st.spinner(f"게임 '{new_game_name}' 분석 파이프라인 실행 중..."):
             
-            # a. 크롤링 (collector.py 호출)
-            json_path, app_id, error = run_collection(new_game_name, limit=review_limit)
-            if error: st.error(f"❌ 크롤링 오류: {error}"); return
-            st.success(f"✅ App ID 발견: {app_id}")
+        with st.spinner(f"'{search_term}' 검색 중..."):
+            results = search_games(search_term) # 💡 새로운 검색 함수 호출
             
-            # b. 성향 분석 (analyzer.py 호출)
-            analyzed_path, error = run_analysis(json_path, app_id, new_game_name)
-            if error: st.error(f"❌ 분석 오류: {error}"); return
-            st.success(f"✅ 성향 벡터 분석 완료")
+        if not results:
+            st.error(f"❌ '{search_term}'에 대한 검색 결과를 찾을 수 없습니다.")
+            st.session_state['search_results'] = []
+        else:
+            st.session_state['search_results'] = results
+            st.success(f"✅ 총 {len(results)}개의 연관 게임을 찾았습니다. 목록에서 게임을 선택하세요.")
             
-            # c. BERT 생성 (generator_bert.py 호출)
-            summary, tags, output_path, pos_ratio = run_bert_generation(analyzed_path, new_game_name, tokenizer, model)
+    if 'search_results' in st.session_state and st.session_state['search_results']:
+        st.subheader("검색 결과 및 분석할 게임 선택")
+        # Streamlit의 columns를 사용하여 결과 표시
+        
+        # 선택된 게임 정보를 저장할 변수
+        selected_game_info = None 
+        
+        # 각 검색 결과를 카드 형태로 표시
+        for i, item in enumerate(st.session_state['search_results']):
+            col1, col2 = st.columns([1, 4])
+            
+            with col1:
+                # 이미지가 존재하는지 확인 (None이 아니고 빈 문자열이 아닐 때)
+                if item.get('header_image'):
+                    st.image(item['header_image'], width=100, caption=str(item['app_id']))
+                else:
+                    # 이미지가 없을 경우 대체 텍스트나 빈 공간 표시
+                    st.write("🖼️ (No Image)")
+            
+            with col2:
+                st.markdown(f"{item['name']}")
+                st.markdown(
+                    f"""
+                    - 📅 **출시일:** {item['release_date']}
+                    - 💰 **가격:** {item['price']}
+                    - 🆔 **App ID:** {item['app_id']}
+                    """
+                )
+                # 분석 시작 버튼 추가 (각 카드별로 버튼이 생김)
+                if st.button(f"🚀 {item['name']} 분석 시작", key=f"analyze_btn_{item['app_id']}"):
+                    selected_game_info = item
+                    break # 버튼이 눌리면 루프 종료
+        if selected_game_info:
+            new_game_name = selected_game_info['name']
+            app_id = selected_game_info['app_id']
+            
+            with st.spinner(f"게임 '{new_game_name}' 분석 파이프라인 실행 중 (ID: {app_id})..."):
+                
+                # a. 크롤링 (run_collection 호출 - 이제 App ID를 직접 전달)
+                json_path, app_id, error = run_collection(app_id, new_game_name, limit=review_limit)
+                if error: st.error(f"❌ 크롤링 오류: {error}"); return
+                st.success(f"✅ App ID 발견: {app_id}")
+                
+                # b. 성향 분석 (analyzer.py 호출)
+                analyzed_path, error = run_analysis(json_path, app_id, new_game_name)
+                if error: st.error(f"❌ 분석 오류: {error}"); return
+                st.success(f"✅ 성향 벡터 분석 완료")
+                
+                # c. BERT 생성 (generator_bert.py 호출)
+                summary, tags, output_path, pos_ratio = run_bert_generation(analyzed_path, new_game_name, tokenizer, model)
 
-            st.success(f"✅ 파이프라인 분석 완료! 긍정 비율: {pos_ratio}%, 요약: {summary[:50]}...")
-            st.balloons()
-            st.session_state['last_analyzed_game'] = new_game_name.replace(' ', '_')
-            st.rerun() 
-
+                st.success(f"✅ 파이프라인 분석 완료! 긍정 비율: {pos_ratio}%, 요약: {summary[:50]}...")
+                st.balloons()
+                st.session_state['last_analyzed_game'] = new_game_name.replace(' ', '_')
+                st.session_state['search_results'] = [] # 분석 완료 후 검색 결과 초기화
+                st.rerun()
+                
     st.markdown("---")
     
     # 2. 분석된 게임 선택 및 개인화 분석 섹션
@@ -278,7 +326,10 @@ def main_app():
         
         st.subheader("🔑 전체 리뷰 기반 추천 태그")
         tag_display_bert = " ".join([f'<span style="background-color:#5cb85c; color:white; padding:5px 10px; border-radius:15px; margin-right:5px; font-weight:bold;">{tag}</span>' for tag in bert_tags])
-        st.markdown(tag_display_bert, unsafe_allow_html=True)
+        if bert_tags: # 태그 리스트가 비어 있지 않으면 표시
+            st.markdown(tag_display_bert, unsafe_allow_html=True)
+        else: # 💡 태그 리스트가 비어 있다면 폴백 메시지 출력
+            st.warning("분석 결과, 두드러지는 사용자 성향(임계값 0.15 이상)을 찾지 못하여 새로운 태그를 생성하지 않았습니다.")
         
         st.markdown("---")
         
