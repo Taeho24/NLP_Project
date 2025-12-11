@@ -35,12 +35,13 @@
 ### 사용 기술 (Tech Stack)
 
 | 구분 | 기술 | 역할 |
-| --- | --- | --- |
-| **언어** | Python 3.9+ | 전체 개발 환경 |
+| :--- | :--- | :--- |
+| **언어/환경** | Python 3.9+ | 전체 개발 환경 및 스크립팅 |
 | **프론트엔드** | Streamlit | 웹 기반 분석 대시보드 및 UI 구성 |
-| **NLP 모델** | KoBERT (SKT KoBERT-Base) | 리뷰 텍스트의 문장 임베딩 및 요약 추출 |
+| **NLP 모델** | **KoBERT** (SKT KoBERT-Base) | 리뷰 텍스트의 문장 임베딩 및 요약 추출 |
 | **데이터 처리**| Pandas, NumPy, Scikit-learn | 성향 벡터 계산, 집계, K-Means 클러스터링 기반 요약 |
-| **크롤링** | `steamreviews`, `requests`, `BeautifulSoup` | Steam 게임 리뷰 데이터 수집 |
+| **데이터 수집** | `steamreviews`, `requests`, `BeautifulSoup` | Steam 게임 리뷰 데이터 크롤링 |
+| **딥러닝** | PyTorch, Hugging Face Transformers | KoBERT 모델 구동 및 관리 |
 
 ## 📁 디렉토리 구조
 
@@ -82,7 +83,7 @@ source .\venv\Scripts\activate   # Windows
 pip install torch torchvision torchaudio --index-url [https://download.pytorch.org/whl/cpu](https://download.pytorch.org/whl/cpu)
 
 # 나머지 라이브러리 설치
-pip install streamlit pandas numpy requests beautifulsoup4 steamreviews scikit-learn transformers kobert-transformers
+pip install -r requirements.txt
 ```
 
 ### 3. 디렉토리 준비
