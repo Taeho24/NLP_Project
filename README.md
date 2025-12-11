@@ -47,14 +47,14 @@
 
 ```
 NLP_PROJECT/
-├── app.py                      \# Streamlit 메인 실행 파일 (파이프라인 컨트롤러)
-├── data/                       \# steamreviews의 크롤링 캐싱 데이터 (.json)
-├── dataSet/                    \# 모든 입력/출력 데이터 저장소 (.json, .csv, .txt)
-├── collectData/                \# 데이터 수집 모듈 패키지
-│   └── collector.py            \# Steam 크롤링 로직
-└── model/                      \# 분석 및 생성 모듈 패키지
-    ├── analyzer.py             \# 성향 벡터 계산 로직
-    └── generator_bert.py       \# KoBERT 모델 로드 및 요약/태그 생성 로직
+├── app.py                      # Streamlit 메인 실행 파일 (파이프라인 컨트롤러)
+├── data/                       # steamreviews의 크롤링 캐싱 데이터 (.json)
+├── dataSet/                    # 모든 입력/출력 데이터 저장소 (.json, .csv, .txt)
+├── collectData/                # 데이터 수집 모듈 패키지
+│   └── collector.py            # Steam 크롤링 로직
+└── model/                      # 분석 및 생성 모듈 패키지
+    ├── analyzer.py             # 성향 벡터 계산 로직
+    └── generator_bert.py       # KoBERT 모델 로드 및 요약/태그 생성 로직
 ````
 
 ## 설치 및 실행 방법
@@ -71,7 +71,7 @@ cd NLP_Project
 # 가상 환경 생성 및 활성화 (Python 3.9 이상 권장)
 python -m venv venv
 source venv/bin/activate  # Linux/macOS
-source .\venv\Scripts\activate   # Windows
+.\venv\Scripts\activate   # Windows
 ````
 
 ### 2. 의존성 설치
@@ -94,7 +94,7 @@ pip install -r requirements.txt
 mkdir dataSet
 ```
 
-### 4\. Streamlit 앱 실행
+### 4. Streamlit 앱 실행
 
 **프로젝트의 루트 디렉토리**에서 `app.py`를 실행합니다.
 
@@ -103,5 +103,3 @@ streamlit run app.py
 ```
 
 브라우저가 열리면, UI에서 분석하고자 하는 게임 이름을 입력하고 파이프라인을 실행할 수 있습니다. (게임 이름은 영어명 인식을 권장합니다.)
-
-```
