@@ -48,7 +48,8 @@ def aggregate_user_profiles(df: pd.DataFrame, min_playtime_hours: int = 2) -> Tu
     # 1) 신뢰도 낮은 데이터 필터링 (플레이 시간 2시간 미만(게임환불시간:2h), 텍스트 없음)
     df_filtered = df[
         (df['playtime_hours'] >= min_playtime_hours) & 
-        (df['review_text'].str.strip() != '')
+        (df['review_text'].str.strip() != '') &
+        (df['review_text'].notna())
     ].copy()
 
     if df_filtered.empty:
@@ -61,16 +62,15 @@ def aggregate_user_profiles(df: pd.DataFrame, min_playtime_hours: int = 2) -> Tu
     persona_cols = [col for col in df_filtered.columns if col.startswith('S_')]
     
     # 2) 사용자별 최종 성향 벡터 및 통계 집계
-    agg_args = {}
+    agg_args = {
+        'review_text': lambda x: x.loc[x.str.len().idxmax()] if x.str.len().max() > 0 else '',
+        'voted_up': 'mean',
+        'playtime_forever': 'mean'
+    }
     for col in persona_cols:
-        agg_args[col] = pd.NamedAgg(column=col, aggfunc='mean')
-        
-    agg_args['representative_review'] = pd.NamedAgg(
-        column='review_text', 
-        aggfunc=lambda x: x.iloc[x.str.len().argmax()]
-    )
+        agg_args[col] = 'mean'
     
-    agg_df = df_filtered.groupby('author_id').agg(**agg_args).reset_index()
+    agg_df = df_filtered.groupby('author_id').agg(agg_args).reset_index()
     
     # 전체 유저의 최종 평균 성향 벡터 (요약 및 태그 생성에 사용)
     game_persona_vector = agg_df[persona_cols].mean().to_dict()
@@ -81,7 +81,7 @@ def aggregate_user_profiles(df: pd.DataFrame, min_playtime_hours: int = 2) -> Tu
     # game_name = parts[-2]
     
     # 모든 리뷰 텍스트를 하나의 리스트로 반환 (요약에 사용)
-    all_reviews = df_filtered['review_text'].tolist()
+    all_reviews = df['review_text'].fillna('').tolist()
     
     return game_persona_vector, all_reviews
 
@@ -91,6 +91,8 @@ def get_sentence_embeddings(reviews: List[str], tokenizer: AutoTokenizer, model:
     # 모든 리뷰를 문장 단위로 분리
     sentences = []
     for review in reviews:
+        if review is None or not isinstance(review, str):
+            continue
         # 간단한 문장 분리 (마침표 기준)
         sentences.extend([s.strip() for s in review.split('.') if s.strip()])
 
@@ -185,7 +187,13 @@ def run_bert_generation(analyzed_csv_path: str, game_name: str, tokenizer: AutoT
     """
     분석된 CSV 파일을 로드하여 BERT 생성 및 TXT 파일 저장을 실행합니다.
     """
-    df = pd.read_csv(analyzed_csv_path)
+    try:
+        df = pd.read_csv(analyzed_csv_path)
+    except Exception as e:
+        raise FileNotFoundError(f"분석 파일 로드 실패: {analyzed_csv_path}. 오류: {e}")
+    
+    if df.empty:
+        raise ValueError("로드된 분석 데이터프레임이 비어있습니다. 리뷰 수집을 확인하세요.")
     
     # 1.1. 전체 긍정 비율 계산 (모든 리뷰 사용)
     total_reviews = len(df)
