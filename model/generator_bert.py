@@ -6,6 +6,7 @@ import numpy as np
 import os
 import json
 import torch
+import re
 from transformers import AutoModel, AutoTokenizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cluster import KMeans
@@ -17,6 +18,31 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dataS
 
 # 한국어 BERT 모델 (KoBERT) 로드
 MODEL_NAME = "skt/kobert-base-v1" 
+
+# 텍스트 정제 함수
+def clean_text(text):
+    """
+    리뷰 텍스트를 정규화 및 정제하는 함수
+    """
+    if pd.isna(text) or text is None:
+        return ""
+    
+    text = str(text)
+    
+    # 1. HTML 태그 및 URL 제거
+    text = re.sub(r'<[^>]+>|http\S+', '', text)
+    
+    # 2. 특수문자 제거 (한글, 영문, 숫자, 공백, 그리고 문장 분리를 위한 마침표/물음표/느낌표는 보존)
+    # 문장 분리(split('.'))가 뒤에 있으므로 마침표는 지우면 안 됩니다.
+    text = re.sub(r'[^가-힣a-zA-Z0-9\s\.\?\!]', '', text)
+    
+    # 3. 반복 문자 축약 (예: ㅋㅋㅋㅋㅋ -> ㅋㅋ)
+    text = re.sub(r'([ㅋㅎ!])\1{2,}', r'\1\1', text)
+    
+    # 4. 다중 공백 단일화
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    return text
 
 # Streamlit 환경에서 캐싱 가능하도록 별도 함수로 정의
 def load_bert_model():
@@ -43,6 +69,9 @@ def aggregate_user_profiles(df: pd.DataFrame, min_playtime_hours: int = 2) -> Tu
     #     print(f"❌ 오류: 파일을 찾을 수 없습니다: {input_csv_path}")
     #     return None
     
+    if 'review_text' in df.columns:
+        df['review_text'] = df['review_text'].apply(clean_text)
+    
     df['playtime_hours'] = df['playtime_forever'] / 60
     
     # 1) 신뢰도 낮은 데이터 필터링 (플레이 시간 2시간 미만(게임환불시간:2h), 텍스트 없음)
@@ -51,6 +80,9 @@ def aggregate_user_profiles(df: pd.DataFrame, min_playtime_hours: int = 2) -> Tu
         (df['review_text'].str.strip() != '') &
         (df['review_text'].notna())
     ].copy()
+
+    # groupby 연산 오류 방지
+    df_filtered = df_filtered[df_filtered['author_id'].notna()].copy()
 
     if df_filtered.empty:
         # print("경고: 필터링 후 분석할 유효한 리뷰가 부족합니다.")
