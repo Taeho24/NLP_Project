@@ -8,6 +8,7 @@ import json
 import pandas as pd
 from typing import List, Dict, Any, Tuple
 import time
+import re
 
 # --- 환경 설정 ---
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dataSet')
@@ -70,7 +71,7 @@ def get_game_reviews(app_id: int, limit: int = 200) -> Tuple[Dict[str, Any] | No
                     
             if reviews_data:
                 # 리뷰 딕셔너리를 포함하여 run_collection으로 전달
-                return {'reviews': reviews_data}, None 
+                return {'reviews': reviews_data}, None
             else:
                 return None, f"리뷰를 찾을 수 없거나 수집 제한({limit}개)으로 인해 데이터가 비어있습니다."
 
@@ -143,7 +144,7 @@ def search_games(game_name: str) -> List[Dict[str, Any]]:
 
 def run_collection(app_id: int, game_name: str, limit: int = 200) -> Tuple[str, int, str]:
     """크롤링을 실행하고 원본 JSON 파일 경로와 App ID를 반환합니다."""
-    app_id = get_app_id_by_name(game_name)
+    # app_id = get_app_id_by_name(game_name)
     if not app_id:
         return None, None, f"Steam에서 '{game_name}'의 App ID를 찾을 수 없습니다."
 
@@ -153,11 +154,14 @@ def run_collection(app_id: int, game_name: str, limit: int = 200) -> Tuple[str, 
         print(f"리뷰 수집 오류 발생: {error}") # 💡 디버깅 로그 추가
         return None, None, f"리뷰 데이터 수집 오류: {error}"
     
-    if not reviews_data_dict or 'reviews' not in reviews_data_dict:
-        print(f"리뷰 데이터 딕셔너리가 비어있거나 'reviews' 키가 없습니다. App ID: {app_id}") # 💡 디버깅 로그 추가
-        return None, None, "리뷰 데이터를 수집하지 못했거나 데이터 구조에 문제가 있습니다."
+    if not reviews_data_dict or 'reviews' not in reviews_data_dict or not reviews_data_dict.get('reviews'):
+        num_reviews = len(reviews_data_dict.get('reviews', [])) if reviews_data_dict else 0
+        print(f"리뷰 데이터 딕셔너리가 비어있거나 'reviews' 키에 데이터가 부족합니다. 수집 개수: {num_reviews}")
+        return None, None, f"수집된 리뷰 개수가 0개입니다. App ID: {app_id}"
     
-    safe_game_name = game_name.replace(' ', '_')
+    safe_game_name = re.sub(r'[^\w\s가-힣_]', '', game_name)
+    safe_game_name = safe_game_name.replace(' ', '_').replace('__', '_').strip('_')
+    
     output_filename = f"reviews_{app_id}_{limit}_{safe_game_name}.json"
     output_path = os.path.join(DATA_DIR, output_filename)
 
